@@ -356,6 +356,10 @@ namespace MSBuild.ExtensionPack.Computer
     ///         <MSBuild.ExtensionPack.Computer.WindowsService TaskAction="SetAutomatic" ServiceName="__TestService1"/>
     ///         <!-- Set a service to start automatically on system startup on a Remote Machine -->
     ///         <MSBuild.ExtensionPack.Computer.WindowsService TaskAction="SetAutomatic" ServiceName="__TestService1" RemoteUser="$(RemoteUser)" RemoteUserPassword="$(RemoteUserPassword)" MachineName="$(RemoteMachine)"/>
+    ///         <!-- Set a service to start automatically with delay on system startup-->
+    ///         <MSBuild.ExtensionPack.Computer.WindowsService TaskAction="SetAutomaticDelayed" ServiceName="__TestService1"/>
+    ///         <!-- Set a service to start automatically with delay on system startup on a Remote Machine -->
+    ///         <MSBuild.ExtensionPack.Computer.WindowsService TaskAction="SetAutomaticDelayed" ServiceName="__TestService1" RemoteUser="$(RemoteUser)" RemoteUserPassword="$(RemoteUserPassword)" MachineName="$(RemoteMachine)"/>
     ///         <!-- Set a service to start manually -->
     ///         <MSBuild.ExtensionPack.Computer.WindowsService TaskAction="SetManual" ServiceName="__TestService1"/>
     ///         <!-- Set a service to start manually on a Remote Machine -->
@@ -376,6 +380,7 @@ namespace MSBuild.ExtensionPack.Computer
         private const string InstallTaskAction = "Install";
         private const string RestartTaskAction = "Restart";
         private const string SetAutomaticTaskAction = "SetAutomatic";
+        private const string SetAutomaticDelayedTaskAction = "SetAutomaticDelayed";
         private const string SetManualTaskAction = "SetManual";
         private const string StartTaskAction = "Start";
         private const string StopTaskAction = "Stop";
@@ -521,6 +526,9 @@ namespace MSBuild.ExtensionPack.Computer
                 case SetAutomaticTaskAction:
                     this.SetStartupType(StartupTypeAutomatic);
                     break;
+                case SetAutomaticDelayedTaskAction:
+                    this.SetStartupType(StartupTypeAutomaticDelayed);
+                    break;
                 case CheckExistsTaskAction:
                     this.CheckExists(this.ServiceName, false);
                     break;
@@ -625,18 +633,24 @@ namespace MSBuild.ExtensionPack.Computer
 
         private void SetStartupType(string startup)
         {
+            string startMode = startup == StartupTypeAutomaticDelayed ? StartupTypeAutomatic : startup;
             bool targetLocal = this.TargetingLocalMachine(RemoteExecutionAvailable);
             this.LogTaskMessage(string.Format(CultureInfo.CurrentCulture, "Setting StartUp Type to {0} for {1} on '{2}'.", startup, this.ServiceDisplayName, this.MachineName));
             try
             {
                 ManagementObject wmi = this.RetrieveManagementObject(this.ServiceName, targetLocal);
 
-                object[] paramList = new object[] { startup };
+                object[] paramList = new object[] { startMode };
                 object result = wmi.InvokeMethod("ChangeStartMode", paramList);
                 int returnCode = Convert.ToInt32(result, CultureInfo.InvariantCulture);
                 if ((ServiceReturnCode)returnCode != ServiceReturnCode.Success)
                 {
                     this.Log.LogError(string.Format(CultureInfo.CurrentCulture, "SetStartupType [{2}] failed with return code '[{0}] {1}'", returnCode, (ServiceReturnCode)returnCode, startup));
+                }
+
+                if (startup == StartupTypeAutomaticDelayed)
+                {
+                    SetDelayedAutostart();
                 }
             }
             catch (Exception ex)
@@ -1068,16 +1082,21 @@ namespace MSBuild.ExtensionPack.Computer
 
                 if (string.Compare(this.StartupType, StartupTypeAutomaticDelayed, StringComparison.CurrentCultureIgnoreCase) == 0)
                 {
-                    this.LogTaskMessage(string.Format(CultureInfo.CurrentCulture, "...Setting delayed start argument registry setting for '{0}' on '{1}'", this.ServiceDisplayName, this.MachineName));
-                    using (RegistryKey registryKey = RegistryKey.OpenRemoteBaseKey(RegistryHive.LocalMachine, this.MachineName, RegistryView.Registry32))
-                    {
-                        RegistryKey subKey = registryKey.OpenSubKey(@"System\CurrentControlSet\Services\" + this.ServiceName, true);
-                        if (subKey != null)
-                        {
-                            const uint DelayedAutoStart = 1;
-                            subKey.SetValue("DelayedAutostart", DelayedAutoStart, RegistryValueKind.DWord);
-                        }
-                    }
+                    SetDelayedAutostart();
+                }
+            }
+        }
+
+        private void SetDelayedAutostart()
+        {
+            this.LogTaskMessage(string.Format(CultureInfo.CurrentCulture, "...Setting delayed start argument registry setting for '{0}' on '{1}'", this.ServiceDisplayName, this.MachineName));
+            using (RegistryKey registryKey = RegistryKey.OpenRemoteBaseKey(RegistryHive.LocalMachine, this.MachineName, RegistryView.Registry32))
+            {
+                RegistryKey subKey = registryKey.OpenSubKey(@"System\CurrentControlSet\Services\" + this.ServiceName, true);
+                if (subKey != null)
+                {
+                    const uint DelayedAutoStart = 1;
+                    subKey.SetValue("DelayedAutostart", DelayedAutoStart, RegistryValueKind.DWord);
                 }
             }
         }
